@@ -3,15 +3,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UserRepository } from './user.repository';
 import { UserModel } from '../../domain/model/user.model';
 import { fakerPT_BR } from '@faker-js/faker';
-import { IUserRepository } from '../../domain/repository/user/user-repository.interface';
+import { IUserRepository } from '../../domain/repository/user-repository.interface';
 
 const prismaServiceMock = {
   user: {
     create: jest.fn(),
     findUniqueOrThrow: jest.fn(),
-    findFirstOrThrow: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
   },
 };
+
+// TODO: UPDATE and DELETE functions
 
 describe('UserRepository', () => {
   let userRepository: IUserRepository;
@@ -47,6 +50,7 @@ describe('UserRepository', () => {
       password: userData.password!,
       createdAt: new Date(),
       updatedAt: new Date(),
+      deletedAt: null,
     };
 
     beforeAll(() => {
@@ -71,6 +75,7 @@ describe('UserRepository', () => {
       password: fakerPT_BR.internet.password({ length: 12 }),
       createdAt: fakerPT_BR.date.anytime(),
       updatedAt: fakerPT_BR.date.anytime(),
+      deletedAt: null,
     };
 
     beforeAll(() => {
@@ -95,17 +100,66 @@ describe('UserRepository', () => {
       password: fakerPT_BR.internet.password({ length: 12 }),
       createdAt: fakerPT_BR.date.anytime(),
       updatedAt: fakerPT_BR.date.anytime(),
+      deletedAt: null,
     };
 
     beforeAll(() => {
-      prismaServiceMock.user.findFirstOrThrow.mockResolvedValueOnce(user);
+      prismaServiceMock.user.findFirst.mockResolvedValueOnce(user);
     });
 
     it('should return a user by email', async () => {
       const result = await userRepository.findByEmail(email);
 
       expect(result).toEqual(user);
-      expect(prismaServiceMock.user.findFirstOrThrow).toHaveBeenCalled();
+      expect(prismaServiceMock.user.findFirst).toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    const user: UserModel = {
+      id: fakerPT_BR.string.uuid(),
+      firstname: fakerPT_BR.person.firstName(),
+      lastname: fakerPT_BR.person.lastName(),
+      email: fakerPT_BR.internet.email(),
+      password: fakerPT_BR.internet.password({ length: 12 }),
+      createdAt: fakerPT_BR.date.anytime(),
+      updatedAt: fakerPT_BR.date.anytime(),
+      deletedAt: null,
+    };
+
+    beforeAll(() => {
+      prismaServiceMock.user.update.mockResolvedValueOnce(user);
+    });
+
+    it('should return an updated user', async () => {
+      const result = await userRepository.update(user.id, user);
+
+      expect(result).toBe(user);
+      expect(prismaServiceMock.user.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('delete', () => {
+    const user: UserModel = {
+      id: fakerPT_BR.string.uuid(),
+      firstname: fakerPT_BR.person.firstName(),
+      lastname: fakerPT_BR.person.lastName(),
+      email: fakerPT_BR.internet.email(),
+      password: fakerPT_BR.internet.password({ length: 12 }),
+      createdAt: fakerPT_BR.date.anytime(),
+      updatedAt: fakerPT_BR.date.anytime(),
+      deletedAt: new Date(),
+    };
+
+    beforeAll(() => {
+      prismaServiceMock.user.update.mockResolvedValueOnce(user);
+    });
+
+    it('should return a deleted user by id', async () => {
+      const result = await userRepository.deleteById(user.id);
+
+      expect(result).toBe(user);
+      expect(prismaServiceMock.user.update).toHaveBeenCalled();
     });
   });
 });

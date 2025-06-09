@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { IUserRepository } from '../../domain/repository/user/user-repository.interface';
+import { IUserRepository } from '../../domain/repository/user-repository.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserModel } from '../../domain/model/user.model';
 
@@ -21,10 +21,33 @@ export class UserRepository implements IUserRepository {
     });
   }
 
-  public async findByEmail(email: string): Promise<UserModel> {
-    return this.prisma.user.findFirstOrThrow({
+  public async findByEmail(email: string): Promise<UserModel | null> {
+    return this.prisma.user.findFirst({
       where: {
         email,
+      },
+    });
+  }
+
+  public async update(
+    userId: string,
+    userToUpdate: Partial<UserModel>,
+  ): Promise<UserModel> {
+    return this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: userToUpdate,
+    });
+  }
+
+  public async deleteById(userId: string): Promise<UserModel> {
+    return this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        deletedAt: new Date(),
       },
     });
   }

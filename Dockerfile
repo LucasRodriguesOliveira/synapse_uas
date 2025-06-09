@@ -24,5 +24,5 @@ COPY --from=builder /app/prisma ./prisma
 RUN apt-get update -y && apt-get install -y openssl
 
 ENV NODE_ENV=production
-EXPOSE 3000
+EXPOSE 50051
 CMD ["node", "dist/main"]

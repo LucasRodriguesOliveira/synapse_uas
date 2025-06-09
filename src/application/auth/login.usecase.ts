@@ -1,40 +1,54 @@
 import { ICryptoService } from '../../domain/auth/crypto/crypto.interface';
 import { JwtPayload } from '../../domain/auth/jwt/jwt-payload.interface';
 import { IJwtService } from '../../domain/auth/jwt/jwt.interface';
-import { IHttpExceptionService } from '../../domain/exception/http-exception.interface';
 import { ILoggerService } from '../../domain/logger/logger-service.interface';
 import { UserModel } from '../../domain/model/user.model';
-import { FindUserByEmailUseCase } from '../user/find-user-by-email.usecase';
+import { ErrorCode } from '../../domain/types/application/error-code.enum';
+import { ErrorResponse } from '../../domain/types/application/error.interface';
+import { Result } from '../../domain/types/application/result';
+import { FindUserUseCase } from '../user/find-user.usecase';
 
 export class LoginUseCase {
   constructor(
-    private readonly findUserByEmailUseCase: FindUserByEmailUseCase,
+    private readonly findUserUseCase: FindUserUseCase,
     private readonly cryptoService: ICryptoService,
     private readonly jwtService: IJwtService,
     private readonly loggerService: ILoggerService,
-    private readonly exceptionService: IHttpExceptionService,
   ) {}
 
-  public async checkUser(email: string, password: string): Promise<UserModel> {
-    const user = await this.findUserByEmailUseCase.run(email);
+  public async checkUser(
+    email: string,
+    password: string,
+  ): Promise<Result<UserModel, ErrorResponse>> {
+    const userResult = await this.findUserUseCase.byEmail(email);
 
-    const match = await this.cryptoService.compare(password, user!.password);
-
-    if (!match) {
-      user!.password = ''; // not cool logging in console the user password
-
-      const log = {
-        message: `Invalid credentials.`,
-        params: {
-          email,
-        },
-        user,
-      };
-      this.loggerService.warn(LoginUseCase.name, JSON.stringify(log));
-      this.exceptionService.unauthorized({ message: log.message });
+    if (userResult.error) {
+      return userResult;
     }
 
-    return user!;
+    const user = userResult.value;
+
+    const match = await this.cryptoService.compare(password, user.password);
+
+    if (!match) {
+      const log = {
+        code: ErrorCode.WRONG_PASSWORD,
+        message: `User [${email}] tried: ${password}`,
+      };
+
+      this.loggerService.warn(LoginUseCase.name, JSON.stringify(log));
+
+      return {
+        error: {
+          code: ErrorCode.WRONG_PASSWORD,
+          message: 'Invalid credentials',
+        },
+      };
+    }
+
+    return {
+      value: user,
+    };
   }
 
   public async login({ id, email }: UserModel): Promise<string> {

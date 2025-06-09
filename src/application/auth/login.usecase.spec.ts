@@ -1,21 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ICryptoService } from '../../domain/auth/crypto/crypto.interface';
 import { IJwtService } from '../../domain/auth/jwt/jwt.interface';
-import { IHttpExceptionService } from '../../domain/exception/http-exception.interface';
 import { ILoggerService } from '../../domain/logger/logger-service.interface';
-import { FindUserByEmailUseCase } from '../user/find-user-by-email.usecase';
 import { LoginUseCase } from './login.usecase';
 import { BcryptService } from '../../infrastructure/service/bcrypt/bcrypt.service';
 import { JwtTokenService } from '../../infrastructure/service/jwt/jwt.service';
 import { LoggerService } from '../../infrastructure/logger/logger.service';
-import { HttpExceptionService } from '../../infrastructure/http-exception/http-exception.service';
 import { fakerPT_BR } from '@faker-js/faker/.';
 import { UserModel } from '../../domain/model/user.model';
 import { JwtPayload } from '../../domain/auth/jwt/jwt-payload.interface';
-import { UnauthorizedException } from '@nestjs/common';
+import { ErrorCode } from '../../domain/types/application/error-code.enum';
+import { FindUserUseCase } from '../user/find-user.usecase';
 
-const findUserByEmailUseCaseMock = {
-  run: jest.fn(),
+const findUserUseCaseMock = {
+  byEmail: jest.fn(),
 };
 
 const cryptoServiceMock = {
@@ -30,19 +28,12 @@ const loggerServiceMock = {
   warn: jest.fn(),
 };
 
-const exceptionServiceMock = {
-  unauthorized: jest.fn().mockImplementationOnce(() => {
-    throw new UnauthorizedException();
-  }),
-};
-
 describe('LoginUseCase', () => {
   let loginUseCase: LoginUseCase;
-  let findUserByEmailUseCase: jest.Mocked<FindUserByEmailUseCase>;
+  let findUserUseCase: jest.Mocked<FindUserUseCase>;
   let cryptoService: jest.Mocked<ICryptoService>;
   let jwtService: jest.Mocked<IJwtService>;
   let loggerService: jest.Mocked<ILoggerService>;
-  let exceptionService: jest.Mocked<IHttpExceptionService>;
 
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
@@ -54,26 +45,23 @@ describe('LoginUseCase', () => {
             cryptoService,
             jwtService,
             loggerService,
-            exceptionService,
           ) =>
             new LoginUseCase(
               findUserByEmailUseCase,
               cryptoService,
               jwtService,
               loggerService,
-              exceptionService,
             ),
           inject: [
-            FindUserByEmailUseCase,
+            FindUserUseCase,
             BcryptService,
             JwtTokenService,
             LoggerService,
-            HttpExceptionService,
           ],
         },
         {
-          provide: FindUserByEmailUseCase,
-          useValue: findUserByEmailUseCaseMock,
+          provide: FindUserUseCase,
+          useValue: findUserUseCaseMock,
         },
         {
           provide: BcryptService,
@@ -87,24 +75,18 @@ describe('LoginUseCase', () => {
           provide: LoggerService,
           useValue: loggerServiceMock,
         },
-        {
-          provide: HttpExceptionService,
-          useValue: exceptionServiceMock,
-        },
       ],
     }).compile();
 
     loginUseCase = app.get<LoginUseCase>(LoginUseCase);
-    findUserByEmailUseCase = app.get(FindUserByEmailUseCase);
+    findUserUseCase = app.get(FindUserUseCase);
     cryptoService = app.get(BcryptService);
     jwtService = app.get(JwtTokenService);
     loggerService = app.get(LoggerService);
-    exceptionService = app.get(HttpExceptionService);
   });
 
   it('should be defined', () => {
-    expect(exceptionService).toBeDefined();
-    expect(findUserByEmailUseCase).toBeDefined();
+    expect(findUserUseCase).toBeDefined();
     expect(cryptoService).toBeDefined();
     expect(jwtService).toBeDefined();
     expect(loggerService).toBeDefined();
@@ -119,13 +101,14 @@ describe('LoginUseCase', () => {
     password: fakerPT_BR.internet.password(),
     createdAt: fakerPT_BR.date.anytime(),
     updatedAt: fakerPT_BR.date.anytime(),
+    deletedAt: null,
   };
 
   describe('checkUser', () => {
     const { email, password } = user;
 
     beforeEach(() => {
-      findUserByEmailUseCase.run.mockResolvedValueOnce(user);
+      findUserUseCase.byEmail.mockResolvedValueOnce({ value: user });
     });
 
     describe('correct password', () => {
@@ -136,16 +119,15 @@ describe('LoginUseCase', () => {
       it('should authorize user to login', async () => {
         const result = await loginUseCase.checkUser(email, password);
 
-        expect(result).toEqual(user);
-        expect(findUserByEmailUseCase.run).toHaveBeenCalledWith<[string]>(
-          email,
-        );
+        expect(result).toHaveProperty('value');
+        expect(result).not.toHaveProperty('error');
+        expect(result.value).toEqual(user);
+        expect(findUserUseCase.byEmail).toHaveBeenCalledWith<[string]>(email);
         expect(cryptoService.compare).toHaveBeenCalledWith<[string, string]>(
           password,
           user.password,
         );
         expect(loggerService.warn).not.toHaveBeenCalled();
-        expect(exceptionService.unauthorized).not.toHaveBeenCalled();
       });
     });
 
@@ -162,36 +144,26 @@ describe('LoginUseCase', () => {
       });
 
       it('should not authorize user to login', async () => {
-        await expect(
-          loginUseCase.checkUser(email, password),
-        ).rejects.toThrowErrorMatchingSnapshot();
+        const result = await loginUseCase.checkUser(email, password);
 
-        expect(findUserByEmailUseCase.run).toHaveBeenCalledWith<[string]>(
-          email,
-        );
+        expect(result).toHaveProperty('error');
+        expect(result).not.toHaveProperty('value');
+        expect(result.error?.code).toBe(ErrorCode.WRONG_PASSWORD);
+        expect(findUserUseCase.byEmail).toHaveBeenCalledWith<[string]>(email);
         expect(cryptoService.compare).toHaveBeenCalledWith<[string, string]>(
           password,
           wrongPassword,
         );
 
-        const userCopy: UserModel = Object.assign({}, user);
-        userCopy.password = '';
-
         const log = {
-          message: `Invalid credentials.`,
-          params: {
-            email,
-          },
-          user: userCopy,
+          code: ErrorCode.WRONG_PASSWORD,
+          message: `User [${email}] tried: ${password}`,
         };
 
         expect(loggerService.warn).toHaveBeenCalledWith<[string, string]>(
           LoginUseCase.name,
           JSON.stringify(log),
         );
-        expect(exceptionService.unauthorized).toHaveBeenCalledWith<
-          [{ message: string }]
-        >({ message: log.message });
       });
     });
   });

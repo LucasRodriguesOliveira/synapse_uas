@@ -4,7 +4,8 @@ export const envSchema = Joi.object({
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
     .default('development'),
-  PORT: Joi.number().required(),
+  PORT: Joi.string().required(),
+  HOST: Joi.string().required(),
   DB_PORT: Joi.string().required(),
   DB_NAME: Joi.string().required(),
   DB_USER: Joi.string().required(),

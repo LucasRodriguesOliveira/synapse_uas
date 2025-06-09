@@ -6,4 +6,5 @@ export class UserModel {
   lastname: string;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
 }

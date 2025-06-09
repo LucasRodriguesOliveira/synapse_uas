@@ -1,5 +1,5 @@
-// Sim, inspirado no Result do Rust
-export interface Result<T, E> {
-  value?: T;
-  error?: E;
-}
+// Yes, inspired in rust result type
+
+export type Result<T, E> =
+  | { value: T; error?: undefined }
+  | { value?: undefined; error: E };

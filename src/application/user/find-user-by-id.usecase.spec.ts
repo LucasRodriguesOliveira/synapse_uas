@@ -1,21 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { fakerPT_BR } from '@faker-js/faker/.';
-import {
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
-import { FindUserByIdUseCase } from './find-user-by-id.usecase';
-import { DatabaseError } from '../../domain/types/database/database.error';
+import { FindUserUseCase } from './find-user.usecase';
 import { DatabaseErrors } from '../../domain/types/database/database-errors.enum';
-import { IUserRepository } from '../../domain/repository/user/user-repository.interface';
-import { IHttpExceptionService } from '../../domain/exception/http-exception.interface';
+import { IUserRepository } from '../../domain/repository/user-repository.interface';
 import { ILoggerService } from '../../domain/logger/logger-service.interface';
 import { UserRepository } from '../../infrastructure/repository/user.repository';
-import { HttpExceptionService } from '../../infrastructure/http-exception/http-exception.service';
 import { LoggerService } from '../../infrastructure/logger/logger.service';
 import { UserModel } from '../../domain/model/user.model';
+import { ErrorCode } from '../../domain/types/application/error-code.enum';
 
-class DBError extends Error implements DatabaseError {
+class DBError extends Error {
   constructor(public readonly code: DatabaseErrors) {
     super();
   }
@@ -23,15 +17,7 @@ class DBError extends Error implements DatabaseError {
 
 const userRepositoryMock = {
   findById: jest.fn(),
-};
-
-const exceptionServiceMock = {
-  notFound: jest.fn().mockImplementationOnce(() => {
-    throw new NotFoundException();
-  }),
-  internalServerError: jest.fn().mockImplementationOnce(() => {
-    throw new InternalServerErrorException();
-  }),
+  findByEmail: jest.fn(),
 };
 
 const loggerServiceMock = {
@@ -39,36 +25,25 @@ const loggerServiceMock = {
   error: jest.fn(),
 };
 
-describe('FindUserByIdUseCase', () => {
-  let findUserByIdUseCase: FindUserByIdUseCase;
+describe(FindUserUseCase.name, () => {
+  let findUserUseCase: FindUserUseCase;
   let userRepository: jest.Mocked<IUserRepository>;
-  let exceptionService: jest.Mocked<IHttpExceptionService>;
   let loggerService: jest.Mocked<ILoggerService>;
 
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       providers: [
         {
-          provide: FindUserByIdUseCase,
-          inject: [UserRepository, HttpExceptionService, LoggerService],
+          provide: FindUserUseCase,
+          inject: [UserRepository, LoggerService],
           useFactory: (
             userRepository: IUserRepository,
-            exceptionService: IHttpExceptionService,
             loggerService: ILoggerService,
-          ) =>
-            new FindUserByIdUseCase(
-              userRepository,
-              exceptionService,
-              loggerService,
-            ),
+          ) => new FindUserUseCase(userRepository, loggerService),
         },
         {
           provide: UserRepository,
           useValue: userRepositoryMock,
-        },
-        {
-          provide: HttpExceptionService,
-          useValue: exceptionServiceMock,
         },
         {
           provide: LoggerService,
@@ -77,20 +52,18 @@ describe('FindUserByIdUseCase', () => {
       ],
     }).compile();
 
-    findUserByIdUseCase = app.get<FindUserByIdUseCase>(FindUserByIdUseCase);
+    findUserUseCase = app.get<FindUserUseCase>(FindUserUseCase);
     userRepository = app.get(UserRepository);
-    exceptionService = app.get(HttpExceptionService);
     loggerService = app.get(LoggerService);
   });
 
   it('should be defined', () => {
     expect(userRepository).toBeDefined();
-    expect(exceptionService).toBeDefined();
     expect(loggerService).toBeDefined();
-    expect(findUserByIdUseCase).toBeDefined();
+    expect(findUserUseCase).toBeDefined();
   });
 
-  describe('run', () => {
+  describe('By ID', () => {
     const userId: UserModel['id'] = fakerPT_BR.string.uuid();
 
     describe('success', () => {
@@ -102,6 +75,7 @@ describe('FindUserByIdUseCase', () => {
         password: fakerPT_BR.internet.password(),
         createdAt: fakerPT_BR.date.anytime(),
         updatedAt: fakerPT_BR.date.anytime(),
+        deletedAt: null,
       };
 
       beforeAll(() => {
@@ -109,9 +83,11 @@ describe('FindUserByIdUseCase', () => {
       });
 
       it('should find a user by id', async () => {
-        const result = await findUserByIdUseCase.run(userId);
+        const result = await findUserUseCase.byId(userId);
 
-        expect(result).toEqual(user);
+        expect(result).toHaveProperty('value');
+        expect(result).not.toHaveProperty('error');
+        expect(result.value).toEqual(user);
         expect(userRepository.findById).toHaveBeenCalledWith<[UserModel['id']]>(
           userId,
         );
@@ -120,60 +96,102 @@ describe('FindUserByIdUseCase', () => {
 
     describe('failure', () => {
       describe('NotFound', () => {
-        const log = {
-          message: `User [${userId}] could not be found.`,
-          error: new DBError(DatabaseErrors.NOT_FOUND),
-        };
-
         beforeAll(() => {
           userRepository.findById.mockImplementationOnce(() => {
             throw new DBError(DatabaseErrors.NOT_FOUND);
           });
         });
 
-        it('should throw an NotFoundException', async () => {
-          await expect(
-            findUserByIdUseCase.run(userId),
-          ).rejects.toThrowErrorMatchingSnapshot();
+        it('should return a not found error', async () => {
+          const result = await findUserUseCase.byId(userId);
 
+          expect(result).not.toHaveProperty('value');
+          expect(result).toHaveProperty('error');
+          expect(result.error?.code).toBe(ErrorCode.USER_NOT_FOUND);
           expect(loggerService.warn).toHaveBeenCalledWith<[string, string]>(
-            FindUserByIdUseCase.name,
-            JSON.stringify(log),
+            FindUserUseCase.name,
+            `User [${userId}] could not be found.`,
           );
-          expect(exceptionService.notFound).toHaveBeenCalledWith<
-            [{ message: string }]
-          >({
-            message: log.message,
-          });
         });
       });
 
-      describe('InternalServerError', () => {
-        const log = {
-          message: `Unexpected error occurred!`,
-          error: new DBError(DatabaseErrors.UNEXPECTED),
-        };
-
+      describe('Unexpected', () => {
         beforeAll(() => {
           userRepository.findById.mockImplementationOnce(() => {
             throw new DBError(DatabaseErrors.UNEXPECTED);
           });
         });
 
-        it('should throw an InternalServerErrorException', async () => {
-          await expect(
-            findUserByIdUseCase.run(userId),
-          ).rejects.toThrowErrorMatchingSnapshot();
+        it('should return a unexpected error', async () => {
+          const result = await findUserUseCase.byId(userId);
+
+          expect(result).not.toHaveProperty('value');
+          expect(result).toHaveProperty('error');
+          expect(result.error?.code).toBe(ErrorCode.UNEXPECTED);
+
+          const log = {
+            message: 'Unexpected error occurred!',
+            error: new DBError(DatabaseErrors.UNEXPECTED),
+          };
 
           expect(loggerService.error).toHaveBeenCalledWith<[string, string]>(
-            FindUserByIdUseCase.name,
+            FindUserUseCase.name,
             JSON.stringify(log),
           );
-          expect(exceptionService.internalServerError).toHaveBeenCalledWith<
-            [{ message: string }]
-          >({
-            message: log.message,
-          });
+        });
+      });
+    });
+  });
+
+  describe('By Email', () => {
+    const email: string = fakerPT_BR.internet.email();
+
+    describe('success', () => {
+      const user: UserModel = {
+        id: fakerPT_BR.string.uuid(),
+        firstname: fakerPT_BR.person.firstName(),
+        lastname: fakerPT_BR.person.lastName(),
+        email,
+        password: fakerPT_BR.internet.password(),
+        createdAt: fakerPT_BR.date.anytime(),
+        updatedAt: fakerPT_BR.date.anytime(),
+        deletedAt: null,
+      };
+
+      beforeAll(() => {
+        userRepository.findByEmail.mockResolvedValueOnce(user);
+      });
+
+      it('should find a user by email', async () => {
+        const result = await findUserUseCase.byEmail(email);
+
+        expect(result).toHaveProperty('value');
+        expect(result).not.toHaveProperty('error');
+        expect(result.value!).toBe(user);
+        expect(userRepository.findByEmail).toHaveBeenCalledWith<[string]>(
+          email,
+        );
+      });
+    });
+
+    describe('failure', () => {
+      describe('NotFound', () => {
+        const log = `User [${email}] could not be found.`;
+
+        beforeAll(() => {
+          userRepository.findByEmail.mockResolvedValueOnce(null);
+        });
+
+        it('should throw an NotFoundException', async () => {
+          const result = await findUserUseCase.byEmail(email);
+
+          expect(result).toHaveProperty('error');
+          expect(result).not.toHaveProperty('value');
+          expect(result.error!.code).toBe(ErrorCode.USER_NOT_FOUND);
+          expect(loggerService.warn).toHaveBeenCalledWith<[string, string]>(
+            FindUserUseCase.name,
+            log,
+          );
         });
       });
     });

@@ -1,35 +1,16 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ConfigService } from '@nestjs/config';
-import { SwaggerConfig } from './infrastructure/config/types/swagger.interface';
-import { SWAGGER_TOKEN } from './infrastructure/config/env/swagger.config';
-import { SwaggerModule } from '@nestjs/swagger';
-import { createSwaggerDocument } from './infrastructure/config/swagger/swagger.config';
-import { AppConfig } from './infrastructure/config/types/app.interface';
-import { APP_TOKEN } from './infrastructure/config/env/app.config';
-import helmet from 'helmet';
-import { HttpExceptionFilter } from './infrastructure/common/filter/exception.filter';
-import { LoggerService } from './infrastructure/logger/logger.service';
+import { getGrpcOptions } from './infrastructure/config/grpc/grpc.option';
+import { MicroserviceOptions } from '@nestjs/microservices';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  const configService = app.get<ConfigService>(ConfigService);
-  const { docs } = configService.get<SwaggerConfig>(
-    SWAGGER_TOKEN.description!,
-  )!;
+  const { HOST, PORT } = process.env;
 
-  SwaggerModule.setup(
-    docs.path,
-    app,
-    createSwaggerDocument(app, configService),
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    getGrpcOptions(`${HOST}:${PORT}`),
   );
 
-  const { port } = configService.getOrThrow<AppConfig>(APP_TOKEN.description!);
-
-  app.use(helmet());
-
-  app.useGlobalFilters(new HttpExceptionFilter(new LoggerService()));
-
-  await app.listen(port);
+  await app.listen();
 }
 void bootstrap();

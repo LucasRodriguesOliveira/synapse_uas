@@ -1,32 +1,17 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Inject,
-  Post,
-  Request,
-  UseGuards,
-  UseInterceptors,
-  ValidationPipe,
-} from '@nestjs/common';
-import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Controller, Inject } from '@nestjs/common';
 import { LoginProxy } from '../../../infrastructure/proxy/auth/login.proxy';
 import { LoginUseCase } from '../../../application/auth/login.usecase';
 import { CreateUserProxy } from '../../../infrastructure/proxy/user/create-user.proxy';
 import { CreateUserUseCase } from '../../../application/user/create-user.usecase';
-import { LocalGuard } from '../../../infrastructure/common/guard/local.guard';
-import { LoginPresenter } from './presenter/login.presenter';
-import { Request as IRequest } from 'express';
 import { plainToInstance } from 'class-transformer';
-import { FindUserPresenter } from '../user/presenter/find-user.presenter';
-import { RegisterPresenter } from './presenter/register.presenter';
-import { PresenterInterceptor } from '../../../infrastructure/common/interceptor/presenter.interceptor';
-import { CreateUserDto } from '../user/dto/create-user.dto';
-import { CreateUserPresenter } from '../user/presenter/create-user.presenter';
+import { GrpcMethod } from '@nestjs/microservices';
+import { GRPCService } from '../../../infrastructure/grpc/service.enum';
+import { LoginRequest } from './dto/login.dto';
+import { AuthResponse } from './presenter/auth-response.presenter';
+import { UserPresenter } from '../user/presenter/user.presenter';
+import { RegisterDto } from './dto/register.dto';
 
 @Controller('auth')
-@ApiTags('auth')
 export class AuthController {
   constructor(
     @Inject(LoginProxy.Token)
@@ -35,34 +20,43 @@ export class AuthController {
     private readonly createUserUseCase: CreateUserUseCase,
   ) {}
 
-  @HttpCode(HttpStatus.OK)
-  @Post('login')
-  @UseGuards(LocalGuard)
-  @ApiOkResponse({
-    type: LoginPresenter,
-  })
-  public async login(@Request() req: IRequest): Promise<LoginPresenter> {
-    const token = await this.loginUseCase.login(req.user!);
+  @GrpcMethod(GRPCService.AUTH)
+  public async login({ email, password }: LoginRequest): Promise<AuthResponse> {
+    const result = await this.loginUseCase.checkUser(email, password);
+
+    if (result.error) {
+      return {
+        error: result.error,
+      };
+    }
+
+    const token = await this.loginUseCase.login(result.value);
 
     return {
-      token,
-      user: plainToInstance(FindUserPresenter, req.user),
+      value: {
+        token,
+        user: plainToInstance(UserPresenter, result.value),
+      },
     };
   }
 
-  @HttpCode(HttpStatus.CREATED)
-  @Post('register')
-  @ApiCreatedResponse({
-    type: RegisterPresenter,
-  })
-  @UseInterceptors(new PresenterInterceptor(RegisterPresenter))
-  public async register(@Body(ValidationPipe) createUserDto: CreateUserDto) {
-    const user = await this.createUserUseCase.run(createUserDto);
-    const token = await this.loginUseCase.login(user!);
+  @GrpcMethod(GRPCService.AUTH)
+  public async register(registerDto: RegisterDto): Promise<AuthResponse> {
+    const userResult = await this.createUserUseCase.run(registerDto);
+
+    if (userResult.error) {
+      return {
+        error: userResult.error,
+      };
+    }
+
+    const token = await this.loginUseCase.login(userResult.value);
 
     return {
-      user: plainToInstance(CreateUserPresenter, user),
-      token,
+      value: {
+        token,
+        user: plainToInstance(UserPresenter, userResult.value),
+      },
     };
   }
 }

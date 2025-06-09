@@ -1,25 +1,17 @@
-import { InternalServerErrorException } from '@nestjs/common';
 import { CreateUserUseCase } from './create-user.usecase';
-import { IUserRepository } from '../../domain/repository/user/user-repository.interface';
-import { IHttpExceptionService } from '../../domain/exception/http-exception.interface';
+import { IUserRepository } from '../../domain/repository/user-repository.interface';
 import { ILoggerService } from '../../domain/logger/logger-service.interface';
 import { ICryptoService } from '../../domain/auth/crypto/crypto.interface';
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserRepository } from '../../infrastructure/repository/user.repository';
-import { HttpExceptionService } from '../../infrastructure/http-exception/http-exception.service';
 import { LoggerService } from '../../infrastructure/logger/logger.service';
 import { BcryptService } from '../../infrastructure/service/bcrypt/bcrypt.service';
 import { fakerPT_BR } from '@faker-js/faker';
 import { UserModel } from '../../domain/model/user.model';
+import { ErrorCode } from '../../domain/types/application/error-code.enum';
 
 const userRepositoryMock = {
   create: jest.fn(),
-};
-
-const exceptionServiceMock = {
-  internalServerError: jest.fn().mockImplementationOnce(() => {
-    throw new InternalServerErrorException();
-  }),
 };
 
 const loggerServiceMock = {
@@ -34,7 +26,6 @@ const cryptoServiceMock = {
 describe('CreateUserUseCase', () => {
   let createUserUseCase: CreateUserUseCase;
   let userRepository: jest.Mocked<IUserRepository>;
-  let exceptionService: jest.Mocked<IHttpExceptionService>;
   let loggerService: jest.Mocked<ILoggerService>;
   let cryptoService: jest.Mocked<ICryptoService>;
 
@@ -43,32 +34,17 @@ describe('CreateUserUseCase', () => {
       providers: [
         {
           provide: CreateUserUseCase,
-          inject: [
-            UserRepository,
-            HttpExceptionService,
-            LoggerService,
-            BcryptService,
-          ],
+          inject: [UserRepository, LoggerService, BcryptService],
           useFactory: (
             userRepository: IUserRepository,
-            exceptionService: IHttpExceptionService,
             loggerService: ILoggerService,
             cryptoService: ICryptoService,
           ) =>
-            new CreateUserUseCase(
-              userRepository,
-              exceptionService,
-              loggerService,
-              cryptoService,
-            ),
+            new CreateUserUseCase(userRepository, loggerService, cryptoService),
         },
         {
           provide: UserRepository,
           useValue: userRepositoryMock,
-        },
-        {
-          provide: HttpExceptionService,
-          useValue: exceptionServiceMock,
         },
         {
           provide: LoggerService,
@@ -83,14 +59,12 @@ describe('CreateUserUseCase', () => {
 
     createUserUseCase = app.get<CreateUserUseCase>(CreateUserUseCase);
     userRepository = app.get(UserRepository);
-    exceptionService = app.get(HttpExceptionService);
     loggerService = app.get(LoggerService);
     cryptoService = app.get(BcryptService);
   });
 
   it('should be defined', () => {
     expect(userRepository).toBeDefined();
-    expect(exceptionService).toBeDefined();
     expect(loggerService).toBeDefined();
     expect(cryptoService).toBeDefined();
     expect(createUserUseCase).toBeDefined();
@@ -116,6 +90,7 @@ describe('CreateUserUseCase', () => {
         password: hashedPassword,
         createdAt: new Date(),
         updatedAt: new Date(),
+        deletedAt: null,
       };
 
       const log = {
@@ -132,7 +107,9 @@ describe('CreateUserUseCase', () => {
       it('should create a user successfully', async () => {
         const result = await createUserUseCase.run({ ...userData });
 
-        expect(result).toEqual(user);
+        expect(result).toHaveProperty('value');
+        expect(result).not.toHaveProperty('error');
+        expect(result.value).toEqual(user);
         expect(cryptoService.hash).toHaveBeenCalledWith<[string]>(
           userData.password!,
         );
@@ -163,6 +140,7 @@ describe('CreateUserUseCase', () => {
         password: fakerPT_BR.internet.password({ length: 20 }),
         createdAt: new Date(),
         updatedAt: new Date(),
+        deletedAt: null,
       };
 
       const log = {
@@ -180,10 +158,11 @@ describe('CreateUserUseCase', () => {
       });
 
       it('should throw an error', async () => {
-        await expect(
-          createUserUseCase.run({ ...userData }),
-        ).rejects.toThrowErrorMatchingSnapshot();
+        const result = await createUserUseCase.run({ ...userData });
 
+        expect(result).not.toHaveProperty('value');
+        expect(result).toHaveProperty('error');
+        expect(result.error?.code).toBe(ErrorCode.USER_CREATE);
         expect(cryptoService.hash).toHaveBeenCalledWith<[string]>(
           userData.password!,
         );
@@ -191,9 +170,6 @@ describe('CreateUserUseCase', () => {
           CreateUserUseCase.name,
           JSON.stringify(log),
         );
-        expect(exceptionService.internalServerError).toHaveBeenCalledWith<
-          [{ message: string }]
-        >({ message: log.message });
       });
     });
   });
